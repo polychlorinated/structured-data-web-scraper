@@ -326,8 +326,31 @@ async function extractTableRows(page, tableSelector, extractedHeaders, log) {
             return cleanText(cell.textContent);
         }
         
-        // Find the body rows (skip header row if we're looking at tbody)
-        const bodyRows = table.querySelectorAll('tbody > tr');
+        // Find all rows - either in tbody or as direct tr children of the table
+let allRows = [];
+const tbody = table.querySelector('tbody');
+
+if (tbody) {
+    // If tbody exists, get rows from it
+    allRows = tbody.querySelectorAll('tr');
+} else {
+    // If no tbody, get direct tr children of table
+    allRows = table.querySelectorAll('tr');
+}
+
+// Determine where data rows start - skip header row
+let startIndex = 0;
+
+// If first row has th elements, likely a header row
+if (allRows.length > 0 && allRows[0].querySelectorAll('th').length > 0) {
+    startIndex = 1; // Skip the first row
+}
+
+// Skip any thead rows if we're working with all rows
+if (!tbody && table.querySelector('thead')) {
+    const theadRowCount = table.querySelector('thead').querySelectorAll('tr').length;
+    startIndex = Math.max(startIndex, theadRowCount);
+}
         
         // Determine where data rows start - skip header row if needed
         let startIndex = 0;
@@ -337,8 +360,8 @@ async function extractTableRows(page, tableSelector, extractedHeaders, log) {
         
         // Process each data row
         const rows = [];
-        for (let i = startIndex; i < bodyRows.length; i++) {
-            const row = bodyRows[i];
+        for (let i = startIndex; i < allRows.length; i++) {
+            const row = allRows[i];
             const cells = row.querySelectorAll('td');
             
             // Skip rows without enough cells
