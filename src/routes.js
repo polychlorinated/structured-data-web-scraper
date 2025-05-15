@@ -66,6 +66,7 @@ async function extractStructuredData(request, page, log, crawler) {
     
     // Find the most likely target table
     const targetTableInfo = await findTargetTable(page, log);
+    const bodyRows = table.querySelectorAll('tr');
     
     if (!targetTableInfo.found) {
         log.error('Could not find a suitable table to extract');
@@ -246,6 +247,7 @@ async function extractTableData(page, tableSelector, log) {
     
     // Now extract the data rows
     return extractTableRows(page, tableSelector, headers, log);
+    const bodyRows = table.querySelectorAll('tr');
 }
 
 /**
@@ -298,6 +300,7 @@ async function extractTableRows(page, tableSelector, extractedHeaders, log) {
     return page.evaluate((selector, headers) => {
         const table = document.querySelector(selector);
         if (!table) return [];
+        const bodyRows = table.querySelectorAll('tr');
         
         // Helper function to clean text
         function cleanText(text) {
@@ -339,7 +342,7 @@ async function extractTableRows(page, tableSelector, extractedHeaders, log) {
             const cells = row.querySelectorAll('td');
             
             // Skip rows without enough cells
-            if (cells.length < 3) continue;
+            if (cells.length ===0) continue;
             
             // Create an object to hold this row's data
             const rowData = {};
