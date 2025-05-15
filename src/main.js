@@ -214,7 +214,6 @@ if (mode === 'api') {
         
         console.log('Direct API processing completed');
         await Actor.exit();
-        return;
     }
 } else {
     // Standard HTML mode
