@@ -1,28 +1,5 @@
-// Run the crawler
-console.log(`Starting the crawler in ${mode} mode...`);
-try {
-    // Log request details for debugging
-    console.log('First request details:', JSON.stringify(requests[0], null, 2));
-    
-    await crawler.run(requests);
-    console.log('Crawler finished successfully!');
-} catch (error) {
-    console.error('Error during crawling:', error);
-    // Log error details
-    if (error.stack) {
-        console.error('Stack trace:', error.stack);
-    }
-    
-    // Record the error in the dataset
-    await Dataset.pushData({
-        error: 'Crawler error',
-        message: error.message,
-        timestamp: new Date().toISOString()
-    });
-}
+// Apify SDK - toolkit for building Apify Actors
 
-// Exit the Actor gracefully
-await Actor.exit();// Apify SDK - toolkit for building Apify Actors
 import { Actor } from 'apify';
 // Web scraping and browser automation library
 import { PuppeteerCrawler, gotScraping, Dataset } from 'crawlee';
@@ -288,7 +265,7 @@ if (mode === 'api') {
 }
 
 // Run the crawler
-console.log('Starting the crawler...');
+console.log(`Starting the crawler in ${mode} mode...`);
 try {
     // Log request details for debugging
     console.log('First request details:', JSON.stringify(requests[0], null, 2));
@@ -301,6 +278,13 @@ try {
     if (error.stack) {
         console.error('Stack trace:', error.stack);
     }
+    
+    // Record the error in the dataset
+    await Dataset.pushData({
+        error: 'Crawler error',
+        message: error.message,
+        timestamp: new Date().toISOString()
+    });
 }
 
 // Exit the Actor gracefully
