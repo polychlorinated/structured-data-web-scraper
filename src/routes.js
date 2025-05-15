@@ -266,30 +266,57 @@ async function extractTableHeaders(page, tableSelector, log) {
         }
         
         // First try to find headers in thead
+        let headerRow = null;
         let headerCells = [];
+        
+        // Check for thead first
         const thead = table.querySelector('thead');
         if (thead) {
-            const headerRow = thead.querySelector('tr');
+            headerRow = thead.querySelector('tr');
             if (headerRow) {
                 headerCells = headerRow.querySelectorAll('th');
             }
         }
         
-        // If no headers in thead, try the first row
+        // If no headers in thead, try the first row in tbody
         if (headerCells.length === 0) {
-            const firstRow = table.querySelector('tbody > tr:first-child');
-            if (firstRow) {
-                headerCells = firstRow.querySelectorAll('th');
+            const tbody = table.querySelector('tbody');
+            if (tbody) {
+                headerRow = tbody.querySelector('tr:first-child');
+            } else {
+                // If no tbody, try the first row directly in the table
+                headerRow = table.querySelector('tr:first-child');
+            }
+            
+            if (headerRow) {
+                // First try to find th elements
+                headerCells = headerRow.querySelectorAll('th');
                 
-                // If still no th elements, try td elements in first row
+                // If no th elements, use td elements
                 if (headerCells.length === 0) {
-                    headerCells = firstRow.querySelectorAll('td');
+                    headerCells = headerRow.querySelectorAll('td');
                 }
             }
         }
         
-        // Convert NodeList to array and extract text
-        return Array.from(headerCells).map(cell => cleanText(cell.textContent));
+        // Extract and clean header text
+        if (headerCells.length > 0) {
+            // Convert NodeList to array and extract text
+            return Array.from(headerCells).map(cell => {
+                const text = cleanText(cell.textContent);
+                // Use a non-empty placeholder for empty headers
+                return text || `Column_${Array.from(headerCells).indexOf(cell) + 1}`;
+            });
+        }
+        
+        // If still no headers found, generate generic column names based on the first data row
+        const firstDataRow = table.querySelector('tbody tr:first-child') || table.querySelector('tr:first-child');
+        if (firstDataRow) {
+            const cellCount = firstDataRow.querySelectorAll('td').length;
+            return Array.from({ length: cellCount }, (_, i) => `Column_${i + 1}`);
+        }
+        
+        return [];
     }, tableSelector);
 }
 
@@ -300,7 +327,6 @@ async function extractTableRows(page, tableSelector, extractedHeaders, log) {
     return page.evaluate((selector, headers) => {
         const table = document.querySelector(selector);
         if (!table) return [];
-        
         
         // Helper function to clean text
         function cleanText(text) {
@@ -327,30 +353,30 @@ async function extractTableRows(page, tableSelector, extractedHeaders, log) {
         }
         
         // Find all rows - either in tbody or as direct tr children of the table
-let allRows = [];
-const tbody = table.querySelector('tbody');
-
-if (tbody) {
-    // If tbody exists, get rows from it
-    allRows = tbody.querySelectorAll('tr');
-} else {
-    // If no tbody, get direct tr children of table
-    allRows = table.querySelectorAll('tr');
-}
-
-// Determine where data rows start - skip header row
-let startIndex = 0;
-
-// If first row has th elements, likely a header row
-if (allRows.length > 0 && allRows[0].querySelectorAll('th').length > 0) {
-    startIndex = 1; // Skip the first row
-}
-
-// Skip any thead rows if we're working with all rows
-if (!tbody && table.querySelector('thead')) {
-    const theadRowCount = table.querySelector('thead').querySelectorAll('tr').length;
-    startIndex = Math.max(startIndex, theadRowCount);
-}
+        let allRows = [];
+        const tbody = table.querySelector('tbody');
+        
+        if (tbody) {
+            // If tbody exists, get rows from it
+            allRows = Array.from(tbody.querySelectorAll('tr'));
+        } else {
+            // If no tbody, get direct tr children of table
+            allRows = Array.from(table.querySelectorAll('tr'));
+        }
+        
+        // Determine where data rows start - skip header row
+        let startIndex = 0;
+        
+        // Skip thead rows if present
+        const thead = table.querySelector('thead');
+        if (thead) {
+            const theadRowCount = thead.querySelectorAll('tr').length;
+            startIndex = Math.max(startIndex, theadRowCount);
+        } 
+        // If first row has th elements, likely a header row
+        else if (allRows.length > 0 && allRows[0].querySelectorAll('th').length > 0) {
+            startIndex = 1; // Skip the first row
+        }
         
         // Process each data row
         const rows = [];
@@ -358,44 +384,73 @@ if (!tbody && table.querySelector('thead')) {
             const row = allRows[i];
             const cells = row.querySelectorAll('td');
             
-            // Skip rows without enough cells
-            if (cells.length < 2) continue;
+            // Skip rows without cells (might be section headers, etc.)
+            if (cells.length === 0) continue;
             
             // Create an object to hold this row's data
             const rowData = {};
             
-            // If we have extracted headers, use them as keys
-            if (headers && headers.length > 0) {
-                // Map each cell to its corresponding header
-                cells.forEach((cell, cellIndex) => {
-                    if (cellIndex < headers.length) {
-                        const header = headers[cellIndex];
-                        
-                        // Handle different types of cells based on content
-                        const cellText = extractCellText(cell);
-                        
-                        // Special handling for numeric columns
-                        if (header.toLowerCase().includes('rank') || 
-                            header.toLowerCase().includes('population') ||
-                            header.toLowerCase().includes('number')) {
-                            rowData[header] = cleanNumericValue(cellText);
-                        } else {
-                            rowData[header] = cellText;
-                        }
-                    }
-                });
-            } else {
-                // Fallback: use generic column names
-                cells.forEach((cell, cellIndex) => {
-                    rowData[`Column ${cellIndex + 1}`] = extractCellText(cell);
-                });
-            }
+            // Process all cells in the row
+            cells.forEach((cell, cellIndex) => {
+                // Get the header for this column
+                let header = '';
+                if (headers && cellIndex < headers.length) {
+                    header = headers[cellIndex];
+                } else {
+                    header = `Column_${cellIndex + 1}`;
+                }
+                
+                // Extract and clean the cell text
+                const cellText = extractCellText(cell);
+                
+                // Special handling for numeric columns
+                if ((/rank|number|count|total|sum|avg|population|percent|rate|ratio|index|score|rating/i.test(header)) &&
+                    /^[\d.,\-+%]+$/.test(cellText.replace(/\s/g, ''))) {
+                    rowData[header] = cleanNumericValue(cellText);
+                } else {
+                    rowData[header] = cellText;
+                }
+            });
             
             rows.push(rowData);
         }
         
         return rows;
     }, tableSelector, extractedHeaders);
+}
+
+/**
+ * Format and store the extracted data
+ */
+async function storeExtractedData(extractedData, request, log) {
+    if (!extractedData || extractedData.length === 0) {
+        log.info('No data to store');
+        return;
+    }
+    
+    // Get all unique columns from all rows
+    const allColumns = new Set();
+    extractedData.forEach(row => {
+        Object.keys(row).forEach(key => allColumns.add(key));
+    });
+    
+    const columns = Array.from(allColumns);
+    
+    // Create a simpler, more direct output format
+    const formattedOutput = {
+        url: request.loadedUrl,
+        title: request.userData.title || 'Structured Data Extraction',
+        timestamp: new Date().toISOString(),
+        source: 'html',
+        rowCount: extractedData.length,
+        columnCount: columns.length,
+        columns,
+        data: extractedData
+    };
+    
+    // Push to dataset
+    await Dataset.pushData(formattedOutput);
+    log.info(`Data successfully pushed to dataset (${extractedData.length} rows, ${columns.length} columns)`);
 }
 
 /**
@@ -532,21 +587,26 @@ function processApiData(apiResponse, userData) {
         return apiResponse.data;
     }
     
-    // Handle ASHA-specific format
+    // Handle ASHA-specific format - but keep all fields instead of a predefined subset
     if (userData.apiType === 'asha' && apiResponse.results) {
-        return apiResponse.results.map(item => ({
-            id: item.id,
-            name: item.name,
-            address: item.address,
-            city: item.city,
-            state: item.state,
-            zip: item.zip,
-            phone: item.phone,
-            type: item.type
-        }));
+        // Return all fields from each result
+        return apiResponse.results;
     }
     
-    // Fallback - return the whole response
+    // Fallback - return the whole response or its fields in an array
+    if (typeof apiResponse === 'object' && apiResponse !== null) {
+        const fields = Object.keys(apiResponse);
+        if (fields.some(field => Array.isArray(apiResponse[field]))) {
+            // If any field is an array, it's likely the data we want
+            for (const field of fields) {
+                if (Array.isArray(apiResponse[field])) {
+                    return apiResponse[field];
+                }
+            }
+        }
+    }
+    
+    // If we can't identify a specific array to return, wrap the response in an array
     return [apiResponse];
 }
 
