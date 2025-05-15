@@ -77,135 +77,69 @@ async function extractMunicipalityTable(request, page, log) {
     await page.screenshot({ path: 'page-scrolled.png', fullPage: false });
     log.info('Scrolled page screenshot saved');
     
-    // Extract the table data - we found the main municipalities table from logs
-    // The table with class 'wikitable sortable jquery-tablesorter' is the one we want
-    const tableData = await page.evaluate(() => {
-        // Directly target the first table which is the municipalities table
-        const table = document.querySelector('table.wikitable.sortable');
-        
-        if (!table) {
-            console.error('Table not found');
-            return { error: 'Table not found' };
-        }
-        
-        // Extract data from the table
-        const rows = [];
-        const tableRows = table.querySelectorAll('tbody > tr');
-        console.log(`Found ${tableRows.length} rows in the table body`);
-        
-        for (let i = 0; i < tableRows.length; i++) {
-            try {
-                const row = tableRows[i];
-                const cells = row.querySelectorAll('td');
-                
-                // Skip rows without enough cells
-                if (cells.length < 3) {
-                    console.log(`Skipping row ${i+1} - not enough cells (${cells.length})`);
-                    continue;
-                }
-                
-                // Get the rank (first column)
-                let rankText = cells[0].textContent.trim();
-                // Clean up rank value (remove sort value)
-                rankText = rankText.replace(/[^\d]/g, '');
-                
-                // Get municipality (second column)
-                const municipalityCell = cells[1];
-                let municipalityText = '';
-                
-                // Try to get text from link first
-                const municipalityLink = municipalityCell.querySelector('a');
-                if (municipalityLink) {
-                    municipalityText = municipalityLink.textContent.trim();
-                } else {
-                    municipalityText = municipalityCell.textContent.trim();
-                }
-                
-                // Get designation (third column)
-                const designationText = cells[2].textContent.trim();
-                
-                console.log(`Row ${i+1}: Rank=${rankText}, Municipality=${municipalityText}, Designation=${designationText}`);
-                
-                // Add to results array
+    const allRows = [];
+
+    let pageNumber = 1;
+    let hasNextPage = true;
+    
+    while (hasNextPage) {
+        log.info(`Scraping page ${pageNumber}...`);
+    
+        const tableData = await page.evaluate(() => {
+            const table = document.querySelector('table.wikitable.sortable');
+            if (!table) return [];
+    
+            const rows = [];
+            const tableRows = table.querySelectorAll('tbody > tr');
+    
+            for (let i = 0; i < tableRows.length; i++) {
+                const cells = tableRows[i].querySelectorAll('td');
+                if (cells.length < 3) continue;
+    
+                let rankText = cells[0].textContent.trim().replace(/[^\d]/g, '');
+                let municipalityText = cells[1].querySelector('a')?.textContent.trim() || cells[1].textContent.trim();
+                let designationText = cells[2].textContent.trim();
+    
                 rows.push({
                     '2023 Rank': rankText,
                     'Municipalities': municipalityText,
                     'Designation': designationText
                 });
-            } catch (error) {
-                console.error(`Error processing row ${i+1}:`, error.message);
             }
-        }
-        
-        return rows;
-    });
     
-    // Check if we got data
-    if (!Array.isArray(tableData) || tableData.length === 0) {
-        log.error('Failed to extract table data or no rows found');
-        
-        // Try a more direct approach as a last resort
-        const directExtraction = await page.evaluate(() => {
-            const results = [];
-            // Try to directly access table content
-            const rows = document.querySelectorAll('table.wikitable.sortable tbody tr');
-            
-            console.log(`Direct extraction found ${rows.length} rows`);
-            
-            for (let i = 0; i < rows.length; i++) {
-                try {
-                    const cells = rows[i].querySelectorAll('td');
-                    if (cells.length >= 3) {
-                        results.push({
-                            '2023 Rank': cells[0].textContent.replace(/[^\d]/g, '').trim(),
-                            'Municipalities': cells[1].textContent.trim(),
-                            'Designation': cells[2].textContent.trim()
-                        });
-                    }
-                } catch (e) {
-                    console.error(`Error on row ${i}:`, e.message);
-                }
-            }
-            
-            return results;
+            return rows;
         });
-        
-        if (directExtraction.length > 0) {
-            log.info(`Direct extraction successful with ${directExtraction.length} rows`);
-            
-            // Format the output
-            const formattedOutput = {
-                block_1_output: `The user goal is to locate a table with the headings '2023 Rank', 'Municipalities', and 'Designation', and to see the first data row as '${directExtraction[0]['2023 Rank']}', '${directExtraction[0]['Municipalities']}', '${directExtraction[0]['Designation']}'. The table is present on the page, and the first row under these headings contains the required data. The screenshot and parsed elements confirm this.`,
-                block_2_output: {
-                    rows: directExtraction
-                }
-            };
-            
-            // Push to dataset
-            await Dataset.pushData(formattedOutput);
-            log.info('Data successfully pushed to dataset');
-            return;
+    
+        allRows.push(...tableData);
+        log.info(`Page ${pageNumber} yielded ${tableData.length} rows`);
+    
+        hasNextPage = await page.evaluate(() => {
+            const nextBtn = document.querySelector('.pagination-next, a[rel="next"]');
+            if (nextBtn && !nextBtn.disabled) {
+                nextBtn.click();
+                return true;
+            }
+            return false;
+        });
+    
+        if (hasNextPage) {
+            await page.waitForTimeout(2000); // you can fine-tune this
+            pageNumber++;
         }
-        
-        // Take a screenshot for debugging
-        await page.screenshot({ path: 'error-extraction.png', fullPage: true });
-        log.info('Error screenshot saved');
-        return;
     }
     
-    log.info(`Successfully extracted ${tableData.length} rows`);
+    log.info(`Scraped a total of ${allRows.length} rows from ${pageNumber} page(s).`);
     
-    // Format the output
     const formattedOutput = {
-        block_1_output: `The user goal is to locate a table with the headings '2023 Rank', 'Municipalities', and 'Designation', and to see the first data row as '${tableData[0]?.['2023 Rank'] || 'N/A'}', '${tableData[0]?.['Municipalities'] || 'N/A'}', '${tableData[0]?.['Designation'] || 'N/A'}'. The table is present on the page, and the first row under these headings contains the required data. The screenshot and parsed elements confirm this.`,
+        block_1_output: `Scraped ${allRows.length} rows from ${pageNumber} page(s).`,
         block_2_output: {
-            rows: tableData
+            rows: allRows
         }
     };
     
-    // Push to dataset
     await Dataset.pushData(formattedOutput);
     log.info('Data successfully pushed to dataset');
+    await page.screenshot({ path: 'final-screenshot.png', fullPage: false });
     
     // Take a success screenshot
     await page.screenshot({ path: 'success.png', fullPage: false });
