@@ -1,101 +1,186 @@
-# JavaScript PuppeteerCrawler Actor template
+# Structured Data Web Extractor
 
-This template is a production ready boilerplate for developing with `PuppeteerCrawler`. The `PuppeteerCrawler` provides a simple framework for parallel crawling of web pages using headless Chrome with Puppeteer. Since `PuppeteerCrawler` uses headless Chrome to download web pages and extract data, it is useful for crawling of websites that require to execute JavaScript.
+This actor is designed to extract structured data from various sources including HTML tables and API endpoints. It provides flexible configuration options to handle different data sources and pagination patterns.
 
-If you're looking for examples or want to learn more visit:
+## Features
 
-- [Crawlee + Apify Platform guide](https://crawlee.dev/docs/guides/apify-platform)
-- [Examples](https://crawlee.dev/docs/examples/puppeteer-crawler)
+- **Multi-source extraction**: Extract data from HTML tables (like Wikipedia) or API endpoints
+- **Comprehensive table extraction**: Extracts all columns from tables, not just a predefined subset
+- **API support**: Makes authenticated API requests with custom headers and body
+- **Automatic pagination**: Follows pagination links to extract data from multiple pages
+- **Flexible configuration**: Customize extraction behavior through input parameters
 
-## Included features
+## Use Cases
 
-- **[Puppeteer Crawler](https://crawlee.dev/api/puppeteer-crawler/class/PuppeteerCrawler)** - simple framework for parallel crawling of web pages using headless Chrome with Puppeteer
-- **[Configurable Proxy](https://crawlee.dev/docs/guides/proxy-management#proxy-configuration)** - tool for working around IP blocking
-- **[Input schema](https://docs.apify.com/platform/actors/development/input-schema)** - define and easily validate a schema for your Actor's input
-- **[Dataset](https://docs.apify.com/sdk/js/docs/guides/result-storage#dataset)** - store structured data where each object stored has the same attributes
-- **[Apify SDK](https://docs.apify.com/api/client/js/)** - toolkit for building Actors
+1. **Extract data from HTML tables**
+   - Wikipedia tables (municipalities, statistics, rankings, etc.)
+   - Any website with tabular data
 
-## How it works
+2. **Extract data from API endpoints**
+   - JSON APIs requiring authentication
+   - Public data APIs
+   - Specifically supports ASHA provider directory API
 
-1. `Actor.getInput()` gets the input from `INPUT.json` where the start urls are defined
-2.  Create a configuration for proxy servers to be used during the crawling with `Actor.createProxyConfiguration()` to work around IP blocking. Use Apify Proxy or your own Proxy URLs provided and rotated according to the configuration. You can read more about proxy configuration [here](https://crawlee.dev/api/core/class/ProxyConfiguration).
-3. Create an instance of Crawlee's Puppeteer Crawler with `new PuppeteerCrawler()`. You can pass [options](https://crawlee.dev/api/puppeteer-crawler/interface/PuppeteerCrawlerOptions) to the crawler constructor as:
-    - `proxyConfiguration` - provide the proxy configuration to the crawler
-    - `requestHandler` - handle each request with custom router defined in the `routes.js` file.
-4. Handle requests with the custom router from `routes.js` file. Read more about custom routing for the Cheerio Crawler [here](https://crawlee.dev/api/puppeteer-crawler/function/createPuppeteerRouter)
-    - Create a new router instance with `new createPuppeteerRouter()`
-    - Define default handler that will be called for all URLs that are not handled by other handlers by adding `router.addDefaultHandler(() => { ... })`
-    - Define additional handlers - here you can add your own handling of the page
-        ```javascript
-        router.addHandler('detail', async ({ request, page, log }) => {
-            const title = await page.title();
-            // You can add your own page handling here
+## Input Configuration
 
-            await Dataset.pushData({
-                url: request.loadedUrl,
-                title,
-            });
-        });
-        ```
-5. `crawler.run(startUrls);` start the crawler and wait for its finish
+The actor accepts the following input parameters:
 
-## Resources
+### Basic Parameters
 
-If you're looking for examples or want to learn more visit:
+- **startUrls** (required): Array of URLs to scrape. Can be simple URLs or objects with extended configuration.
+- **apiToken**: Optional Bearer token for API authentication.
+- **dataSourceType**: Specify the data source type ("auto", "table", or "api"). Defaults to "auto".
+- **extractAllColumns**: When true, extracts all columns from tables. Defaults to true.
+- **maxPages**: Maximum number of pages to process when pagination is available. Set to 0 for unlimited.
+- **debug**: Enable additional debugging information.
 
-- [Crawlee + Apify Platform guide](https://crawlee.dev/docs/guides/apify-platform)
-- [Documentation](https://crawlee.dev/api/playwright-crawler/class/PlaywrightCrawler) and [examples](https://crawlee.dev/docs/examples/playwright-crawler)
-- [Node.js tutorials](https://docs.apify.com/academy/node-js) in Academy
-- [How to scale Puppeteer and Playwright](https://blog.apify.com/how-to-scale-puppeteer-and-playwright/)
-- [Video guide on getting data using Apify API](https://www.youtube.com/watch?v=ViYYDHSBAKM)
-- [Integration with Make](https://apify.com/integrations), GitHub, Zapier, Google Drive, and other apps
-- A short guide on how to create Actors using code templates:
+### Advanced URL Configuration
 
-[web scraper template](https://www.youtube.com/watch?v=u-i-Korzf8w)
+For more complex scenarios, you can provide detailed configuration for each URL:
 
+```json
+{
+  "url": "https://example.com/data-table",
+  "label": "table",
+  "dataSourceType": "table",
+  "tableSelector": "table.wikitable.sortable",
+  "extractAllColumns": true
+}
+```
 
-## Getting started
+Or for API endpoints:
 
-For complete information [see this article](https://docs.apify.com/platform/actors/development#build-actor-at-apify-console). In short, you will:
+```json
+{
+  "url": "https://api.example.com/data",
+  "dataSourceType": "api",
+  "apiToken": "your-bearer-token",
+  "method": "POST",
+  "headers": {
+    "custom-header": "value"
+  },
+  "body": {
+    "key": "value"
+  },
+  "paginationType": "page",
+  "pageParamName": "page"
+}
+```
 
-1. Build the Actor
-2. Run the Actor
+## Example 1: Extract Wikipedia Table
 
-## Pull the Actor for local development
+To extract the municipalities from New Mexico's Wikipedia page:
 
-If you would like to develop locally, you can pull the existing Actor from Apify console using Apify CLI:
+```json
+{
+  "startUrls": [
+    {
+      "url": "https://en.wikipedia.org/wiki/List_of_municipalities_in_New_Mexico",
+      "dataSourceType": "table"
+    }
+  ],
+  "extractAllColumns": true
+}
+```
 
-1. Install `apify-cli`
+## Example 2: Extract ASHA API Data
 
-    **Using Homebrew**
+To extract audiologist data from the ASHA API:
 
-    ```bash
-    brew install apify-cli
-    ```
+```json
+{
+  "startUrls": [
+    {
+      "url": "https://americanspeechlanguagehearingassociationproductionh0xeoc4i.org.coveo.com/rest/search/v2?organizationId=americanspeechlanguagehearingassociationproductionh0xeoc4i",
+      "dataSourceType": "api",
+      "apiType": "asha",
+      "body": {
+        "aq": "@provider==Audiologist",
+        "searchHub": "ProFind",
+        "locale": "en",
+        "firstResult": 0,
+        "numberOfResults": 10
+      }
+    }
+  ],
+  "apiToken": "xxee022e66-e168-47e9-8f83-d77df9a3cae0"
+}
+```
 
-    **Using NPM**
+## Output Format
 
-    ```bash
-    npm -g install apify-cli
-    ```
+The actor produces a structured Dataset with data from all processed sources. The format depends on the data source type:
 
-2. Pull the Actor by its unique `<ActorId>`, which is one of the following:
-    - unique name of the Actor to pull (e.g. "apify/hello-world")
-    - or ID of the Actor to pull (e.g. "E2jjCZBezvAZnX8Rb")
+### HTML Table Output
 
-    You can find both by clicking on the Actor title at the top of the page, which will open a modal containing both Actor unique name and Actor ID.
+```json
+{
+  "source_type": "html_table",
+  "url": "https://en.wikipedia.org/wiki/List_of_municipalities_in_New_Mexico",
+  "page_title": "List of municipalities in New Mexico - Wikipedia",
+  "tables": [
+    {
+      "tableIndex": 0,
+      "className": "wikitable sortable",
+      "headers": ["Name", "County", "Census Designation", "..."],
+      "rows": [
+        {
+          "Name": "Albuquerque",
+          "County": "Bernalillo",
+          "Census Designation": "City",
+          "...": "..."
+        },
+        "..."
+      ],
+      "rowCount": 105,
+      "columnCount": 7,
+      "hasHeaders": true
+    }
+  ]
+}
+```
 
-    This command will copy the Actor into the current directory on your local machine.
+### API Output
 
-    ```bash
-    apify pull <ActorId>
-    ```
+```json
+{
+  "source_type": "api",
+  "url": "https://americanspeechlanguagehearingassociationproductionh0xeoc4i.org.coveo.com/rest/search/v2",
+  "data": [
+    {
+      "title": "Jennifer C Abbink, CCC-A",
+      "uri": "https://apps.asha.org/eweb/ashadynamicpage.aspx?pfk=3c702b41-35fa-4a92-9f01-fe16aef88c7b",
+      "state": ["Colorado"],
+      "expertise": ["Hearing assistive technology systems", "Audiologic rehabilitation", "Aural rehabilitation"],
+      "ages": ["0-6 Months", "7 Months - 2 Years", "3-5 Years", "6-11 Years", "12-17 Years", "18-64 Years"]
+    },
+    "..."
+  ],
+  "metadata": {
+    "total_count": 2408,
+    "page_info": {}
+  }
+}
+```
 
-## Documentation reference
+## Limitations
 
-To learn more about Apify and Actors, take a look at the following resources:
+- The actor may not correctly extract data from tables with complex structures (merged cells, nested tables).
+- API support is limited to JSON-based REST APIs.
+- The actor relies on Puppeteer and may not work with websites that use advanced anti-scraping techniques.
 
-- [Apify SDK for JavaScript documentation](https://docs.apify.com/sdk/js)
-- [Apify SDK for Python documentation](https://docs.apify.com/sdk/python)
-- [Apify Platform documentation](https://docs.apify.com/platform)
-- [Join our developer community on Discord](https://discord.com/invite/jyEM2PRvMU)
+## Troubleshooting
+
+- If the actor fails to extract data, try enabling debug mode to get more information.
+- For API requests, ensure that the correct authentication token and headers are provided.
+- For complex tables, try specifying the exact table selector to target the right table.
+
+## Development
+
+To modify this actor for your specific needs:
+
+1. Update the `routes.js` file to handle different data sources
+2. Modify the extraction logic in `extractTableData` or `extractApiData` functions
+3. Add support for additional pagination patterns
+
+For more information, see the [Crawlee documentation](https://crawlee.dev/docs).
