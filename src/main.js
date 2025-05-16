@@ -27,13 +27,13 @@ const requests = startUrls.map(startUrl => {
     const userData = {
         label: startUrl.label || null, // Will default to 'default' handler
         dataSourceType: startUrl.dataSourceType || input?.dataSourceType || 'auto', // Will be auto-detected if not specified
+        apiType: startUrl.apiType || input?.apiType || null,
         
         // API-specific options
         apiToken: input?.apiToken || startUrl.apiToken || null,
         headers: input?.headers || startUrl.headers || {},
         method: startUrl.method || 'GET',
         body: startUrl.body || null,
-        apiType: startUrl.apiType || null,
         
         // Pagination options
         paginationType: startUrl.paginationType || null,
@@ -52,39 +52,39 @@ const requests = startUrls.map(startUrl => {
     
     // For ASHA API specifically, configure the request properly
     if (userData.apiType === 'asha') {
-        userData.method = 'POST';
+        console.log('Configuring for ASHA API extraction');
         
-        // Set default headers if not provided
+        // ASHA requires browser-based navigation - use their main page
+        if (!url.includes('find.asha.org')) {
+            const originalUrl = url;
+            url = 'https://find.asha.org/pro/';
+            console.log(`Redirecting ASHA URL from ${originalUrl} to ${url}`);
+        }
+        
+        // ASHA now uses a browser-based approach, so we only
+        // need minimal headers if custom headers aren't provided
         if (!startUrl.headers) {
             userData.headers = {
                 'accept': '*/*',
                 'accept-language': 'en-US,en;q=0.9',
-                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'origin': 'https://find.asha.org',
-                'referer': 'https://find.asha.org/',
                 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
+            };
+        }
+    }
+    
+    // For other APIs, ensure proper configuration
+    if (userData.dataSourceType === 'api' && userData.apiType !== 'asha') {
+        // Add basic JSON API headers if not set
+        if (Object.keys(userData.headers).length === 0) {
+            userData.headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
             };
         }
         
         // Add authorization if token provided
-        if (userData.apiToken) {
-            userData.headers['authorization'] = `Bearer ${userData.apiToken}`;
-        }
-        
-        // Set up default body for ASHA API if not provided
-        if (!userData.body) {
-            userData.body = {
-                aq: "@provider==Audiologist",
-                searchHub: "ProFind",
-                locale: "en",
-                firstResult: 0,
-                numberOfResults: 10,
-                excerptLength: 200,
-                fieldsToInclude: ["date", "clickUri", "syssource", "filetype", "syslanguage", 
-                    "sysindexeddate", "syssize", "provider", "outlookformacuri", "outlookuri", 
-                    "connectortype", "urihash", "collection", "source", "author", "state", 
-                    "ages", "expertise", "language", "objecttype", "permanentid"]
-            };
+        if (userData.apiToken && !userData.headers['Authorization'] && !userData.headers['authorization']) {
+            userData.headers['Authorization'] = `Bearer ${userData.apiToken}`;
         }
     }
     
@@ -114,7 +114,7 @@ const crawler = new PuppeteerCrawler({
         }
     },
     // Additional settings
-    maxRequestRetries: 2,
+    maxRequestRetries: 3,
     requestHandlerTimeoutSecs: 300,
     navigationTimeoutSecs: 180,
     maxConcurrency: input?.maxConcurrency || 1,
@@ -122,7 +122,7 @@ const crawler = new PuppeteerCrawler({
     preNavigationHooks: [
         async ({ page, request }) => {
             page.on('console', (msg) => console.log(`PAGE LOG [${request.loadedUrl}]:`, msg.text()));
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+            await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36');
             
             // Enable debug features if requested
             if (request.userData.debug) {

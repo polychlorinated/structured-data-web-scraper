@@ -1,18 +1,68 @@
 {
-    "title": "PuppeteerCrawler Template",
+    "title": "Structured Data Web Extractor",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
         "startUrls": {
             "title": "Start URLs",
             "type": "array",
-            "description": "URLs to start with.",
+            "description": "URLs to start with. For HTML tables, provide the URL of the page containing the table. For API endpoints or services like ASHA, provide their main URL.",
             "editor": "requestListSources",
             "prefill": [
                 {
-                    "url": "https://apify.com"
+                    "url": "https://en.wikipedia.org/wiki/List_of_municipalities_in_New_Mexico"
                 }
             ]
+        },
+        "apiToken": {
+            "title": "API Bearer Token",
+            "type": "string",
+            "description": "Optional Bearer token for API authentication. Not required for browser-based APIs like ASHA.",
+            "editor": "textfield",
+            "nullable": true
+        },
+        "dataSourceType": {
+            "title": "Data Source Type",
+            "type": "string",
+            "description": "Specify the type of data source to extract from. If not specified, the actor will attempt to auto-detect.",
+            "editor": "select",
+            "enum": ["auto", "table", "api"],
+            "enumTitles": ["Auto-detect", "HTML Table", "API/Service"],
+            "default": "auto",
+            "nullable": true
+        },
+        "apiType": {
+            "title": "API/Service Type",
+            "type": "string",
+            "description": "For known APIs or services, specify the type to use specialized extraction logic.",
+            "editor": "select",
+            "enum": ["generic", "asha"],
+            "enumTitles": ["Generic API", "ASHA Provider Directory"],
+            "default": "generic",
+            "nullable": true
+        },
+        "extractAllColumns": {
+            "title": "Extract All Columns",
+            "type": "boolean",
+            "description": "When enabled, extracts all columns from tables. When disabled, only extracts the first three columns.",
+            "default": true,
+            "nullable": false
+        },
+        "maxPages": {
+            "title": "Maximum Pages to Process",
+            "type": "integer",
+            "description": "Maximum number of pages to process when pagination is available. Set to 0 for unlimited.",
+            "default": 0,
+            "minimum": 0,
+            "nullable": false
+        },
+        "debug": {
+            "title": "Debug Mode",
+            "type": "boolean",
+            "description": "When enabled, saves additional screenshots and logs for debugging purposes.",
+            "default": false,
+            "nullable": false
         }
-    }
+    },
+    "required": ["startUrls"]
 }

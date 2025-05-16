@@ -67,6 +67,13 @@ async function extractApiData(request, page, log, crawler) {
         const customHeaders = request.userData.headers || {};
         const apiMethod = request.userData.method || 'GET';
         const apiBody = request.userData.body;
+        const apiType = request.userData.apiType;
+        
+        // Handle ASHA API differently - their API requires specific handling
+        if (apiType === 'asha') {
+            log.info('Using special ASHA API handling');
+            return await extractAshaApiData(request, page, log, crawler);
+        }
         
         log.info('API extraction configuration', { 
             hasToken: !!apiToken,
@@ -89,24 +96,83 @@ async function extractApiData(request, page, log, crawler) {
         
         // Execute the request using page.evaluate to leverage browser's fetch
         const apiResponse = await page.evaluate(
-            async ({ url, method, headers, body }) => {
+            async ({ url, method, headers, body, apiType }) => {
                 try {
+                    // Prepare the request body based on API type and content-type
+                    let requestBody = undefined;
+                    
+                    // If we have a body, format it correctly based on content-type
+                    if (body) {
+                        const contentType = headers['content-type'] || headers['Content-Type'] || '';
+                        
+                        // For form-urlencoded content type
+                        if (contentType.includes('form-urlencoded')) {
+                            // Convert body object to URL-encoded string
+                            const params = new URLSearchParams();
+                            
+                            // Handle objects, arrays, and primitives properly
+                            Object.entries(body).forEach(([key, value]) => {
+                                if (typeof value === 'object' && value !== null) {
+                                    // For objects and arrays, stringify them
+                                    params.append(key, JSON.stringify(value));
+                                } else {
+                                    // For primitives, convert to string
+                                    params.append(key, String(value));
+                                }
+                            });
+                            
+                            requestBody = params.toString();
+                            console.log('Form URL-encoded body:', requestBody.substring(0, 150) + '...');
+                        } 
+                        // For JSON content type
+                        else if (contentType.includes('application/json')) {
+                            requestBody = JSON.stringify(body);
+                        }
+                        // Default fallback if content-type is not specified
+                        else {
+                            requestBody = JSON.stringify(body);
+                        }
+                    }
+                    
+                    console.log(`Making ${method} request to ${url} with content-type: ${headers['content-type'] || 'not specified'}`);
+                    
                     const response = await fetch(url, {
                         method,
                         headers,
-                        body: body ? JSON.stringify(body) : undefined,
+                        body: requestBody,
                         credentials: 'include'
                     });
                     
+                    // Log response status for debugging
+                    console.log(`Response status: ${response.status} ${response.statusText}`);
+                    
                     if (!response.ok) {
-                        return { 
-                            error: true, 
-                            status: response.status, 
-                            statusText: response.statusText 
-                        };
+                        // Try to read response text for better error information
+                        try {
+                            const errorText = await response.text();
+                            return { 
+                                error: true, 
+                                status: response.status, 
+                                statusText: response.statusText,
+                                errorText: errorText.substring(0, 500) // Limit length
+                            };
+                        } catch (readError) {
+                            return { 
+                                error: true, 
+                                status: response.status, 
+                                statusText: response.statusText 
+                            };
+                        }
                     }
                     
-                    return await response.json();
+                    // Try to parse as JSON
+                    try {
+                        return await response.json();
+                    } catch (jsonError) {
+                        // If it's not JSON, return the text
+                        const text = await response.text();
+                        return { text, _responseType: 'text' };
+                    }
                 } catch (error) {
                     return { error: true, message: error.toString() };
                 }
@@ -115,7 +181,8 @@ async function extractApiData(request, page, log, crawler) {
                 url: request.url, 
                 method: apiMethod, 
                 headers, 
-                body: apiBody 
+                body: apiBody,
+                apiType: request.userData.apiType 
             }
         );
         
@@ -160,6 +227,367 @@ async function extractApiData(request, page, log, crawler) {
         // Take a screenshot for debugging
         await page.screenshot({ path: 'api-error.png', fullPage: true });
         log.info('Error screenshot saved');
+    }
+}
+
+/**
+ * Special handler for the ASHA API, which requires browser-based authentication
+ */
+async function extractAshaApiData(request, page, log, crawler) {
+    log.info('Extracting data from ASHA API');
+    
+    try {
+        // For ASHA API, need to first navigate to the actual page to get authenticated
+        const findAshaUrl = 'https://find.asha.org/pro/';
+        
+        log.info(`Navigating to ASHA find page: ${findAshaUrl}`);
+        await page.goto(findAshaUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        
+        // Wait for the page to load and authenticate
+        await page.waitForSelector('body', { timeout: 30000 });
+        
+        // Take a screenshot for debugging
+        if (request.userData.debug) {
+            await page.screenshot({ path: 'asha-initial.png', fullPage: true });
+            log.info('ASHA initial page screenshot saved');
+        }
+        
+        // Set up the request interceptor to capture API responses
+        let apiResponseData = null;
+        
+        await page.setRequestInterception(true);
+        
+        page.on('request', (req) => {
+            // Pass through all requests
+            req.continue();
+        });
+        
+        page.on('response', async (response) => {
+            const url = response.url();
+            
+            // Check if this is the API response we're looking for
+            if (url.includes('americanspeechlanguagehearingassociationproductionh0xeoc4i.org.coveo.com/rest/search/v2')) {
+                try {
+                    const contentType = response.headers()['content-type'] || '';
+                    if (contentType.includes('application/json')) {
+                        const responseText = await response.text();
+                        try {
+                            apiResponseData = JSON.parse(responseText);
+                            log.info('Successfully captured API response data');
+                        } catch (e) {
+                            log.error(`Error parsing JSON: ${e.message}`);
+                        }
+                    }
+                } catch (error) {
+                    log.error(`Error processing response: ${error.message}`);
+                }
+            }
+        });
+        
+        // Now trigger the search by setting filter
+        log.info('Triggering ASHA search');
+        
+        await page.evaluate(async () => {
+            // This will simulate clicking or filtering for Audiologists
+            try {
+                // Try to click the Audiologist filter if it exists
+                const filterButtons = Array.from(document.querySelectorAll('button'));
+                for (const button of filterButtons) {
+                    if (button.textContent.includes('Audiologist')) {
+                        button.click();
+                        console.log('Clicked Audiologist filter button');
+                        return;
+                    }
+                }
+                
+                // If no button, try to set URL hash directly
+                window.location.hash = '#first=0&sort=relevancy&f:@provider=[Audiologist]';
+                console.log('Set URL hash for Audiologist filter');
+                
+                // Force a reload/search if needed
+                const searchButtons = Array.from(document.querySelectorAll('button'));
+                for (const button of searchButtons) {
+                    if (button.textContent.includes('Search')) {
+                        button.click();
+                        console.log('Clicked Search button');
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.error('Error triggering search:', e);
+            }
+        });
+        
+        // Wait for search results to load
+        await page.waitForFunction(() => {
+            // Check for results or a loading element or error message
+            return document.querySelector('.CoveoResult') !== null || 
+                document.querySelector('.coveo-search-complete') !== null;
+        }, { timeout: 30000 });
+        
+        // Take another screenshot after search
+        if (request.userData.debug) {
+            await page.screenshot({ path: 'asha-search-results.png', fullPage: true });
+            log.info('ASHA search results screenshot saved');
+        }
+        
+        // Wait a bit more for any network requests to complete
+        await page.waitForTimeout(2000);
+        
+        // If we got API data from the intercepted response, use it
+        if (apiResponseData) {
+            log.info('Processing intercepted API response data');
+            
+            // Process the API response data
+            const processedData = processApiData(apiResponseData, request.userData);
+            
+            if (!processedData || processedData.length === 0) {
+                log.error('Failed to process API data or no records found');
+                
+                // Attempt to extract data directly from the page as fallback
+                return await extractAshaResultsFromPage(page, request, log, crawler);
+            }
+            
+            log.info(`Successfully extracted ${processedData.length} records from API`);
+            
+            // Format the output
+            const formattedOutput = {
+                source_type: 'api',
+                url: request.loadedUrl,
+                data: processedData,
+                // Include metadata if available
+                metadata: {
+                    total_count: apiResponseData.totalCount || apiResponseData.totalCountFiltered || processedData.length,
+                    page_info: apiResponseData.pagination || {}
+                }
+            };
+            
+            // Push to dataset
+            await Dataset.pushData(formattedOutput);
+            log.info('ASHA API data successfully pushed to dataset');
+            
+            // Handle pagination
+            const totalCount = apiResponseData.totalCount || apiResponseData.totalCountFiltered || 0;
+            const currentResults = processedData.length;
+            
+            if (totalCount > currentResults) {
+                log.info(`Found ${totalCount} total results, processing pagination`);
+                await handleAshaPagination(page, request, log, crawler, totalCount, currentResults);
+            }
+            
+            return;
+        }
+        
+        // If we couldn't intercept API data, fall back to extracting from the page
+        return await extractAshaResultsFromPage(page, request, log, crawler);
+        
+    } catch (error) {
+        log.error(`Error during ASHA API extraction: ${error.message}`);
+        
+        // Take a screenshot for debugging
+        await page.screenshot({ path: 'asha-error.png', fullPage: true });
+        log.info('Error screenshot saved');
+    }
+}
+
+/**
+ * Extract ASHA results directly from the page HTML as a fallback
+ */
+async function extractAshaResultsFromPage(page, request, log, crawler) {
+    log.info('Extracting ASHA results directly from page HTML');
+    
+    try {
+        // Extract the data from the page
+        const resultData = await page.evaluate(() => {
+            const results = [];
+            
+            // Get all result elements
+            const resultElements = document.querySelectorAll('.CoveoResult');
+            
+            for (const element of resultElements) {
+                try {
+                    // Extract the title
+                    const titleElement = element.querySelector('.CoveoResultLink');
+                    const title = titleElement ? titleElement.textContent.trim() : '';
+                    
+                    // Extract the link
+                    const link = titleElement ? titleElement.href : '';
+                    
+                    // Extract other metadata fields
+                    const metaFields = {};
+                    const fieldElements = element.querySelectorAll('.coveo-field-caption, .coveo-field-table-toggle-caption');
+                    
+                    for (const fieldElement of fieldElements) {
+                        const label = fieldElement.textContent.trim();
+                        const value = fieldElement.nextElementSibling ? fieldElement.nextElementSibling.textContent.trim() : '';
+                        
+                        if (label && value) {
+                            // Clean up label (remove colon)
+                            const cleanLabel = label.replace(':', '').trim();
+                            metaFields[cleanLabel] = value;
+                        }
+                    }
+                    
+                    // Add to results
+                    results.push({
+                        title,
+                        link,
+                        ...metaFields
+                    });
+                } catch (error) {
+                    console.error(`Error processing result: ${error.message}`);
+                }
+            }
+            
+            // Try to get total count information
+            let totalCount = 0;
+            const countElement = document.querySelector('.coveo-query-summary-number');
+            if (countElement) {
+                const countText = countElement.textContent.trim();
+                const match = countText.match(/\d+/);
+                if (match) {
+                    totalCount = parseInt(match[0], 10);
+                }
+            }
+            
+            return {
+                results,
+                totalCount
+            };
+        });
+        
+        if (!resultData || !resultData.results || resultData.results.length === 0) {
+            log.error('No results found on page');
+            return;
+        }
+        
+        log.info(`Extracted ${resultData.results.length} results from page`);
+        
+        // Format the output
+        const formattedOutput = {
+            source_type: 'asha_html',
+            url: request.loadedUrl,
+            data: resultData.results,
+            metadata: {
+                total_count: resultData.totalCount || resultData.results.length
+            }
+        };
+        
+        // Push to dataset
+        await Dataset.pushData(formattedOutput);
+        log.info('ASHA page data successfully pushed to dataset');
+        
+        // Handle pagination if needed
+        if (resultData.totalCount > resultData.results.length) {
+            log.info(`Found ${resultData.totalCount} total results, processing pagination`);
+            await handleAshaPagination(page, request, log, crawler, resultData.totalCount, resultData.results.length);
+        }
+        
+    } catch (error) {
+        log.error(`Error extracting results from page: ${error.message}`);
+        
+        // Take a screenshot for debugging
+        await page.screenshot({ path: 'asha-extraction-error.png', fullPage: true });
+        log.info('Extraction error screenshot saved');
+    }
+}
+
+/**
+ * Handle pagination for ASHA results
+ */
+async function handleAshaPagination(page, request, log, crawler, totalCount, currentResultsCount) {
+    log.info('Handling ASHA pagination');
+    
+    try {
+        // Calculate current page and max pages
+        const resultsPerPage = request.userData.numberOfResults || 10;
+        const currentPage = Math.floor(currentResultsCount / resultsPerPage);
+        const maxPages = Math.ceil(totalCount / resultsPerPage);
+        
+        // Get max pages from userData if set
+        const userMaxPages = request.userData.maxPages || 0;
+        const effectiveMaxPages = userMaxPages > 0 ? Math.min(maxPages, userMaxPages) : maxPages;
+        
+        log.info(`Pagination info: current page ${currentPage}, max pages ${effectiveMaxPages}`);
+        
+        // Check if we need to continue pagination
+        if (currentPage >= effectiveMaxPages - 1) {
+            log.info('Reached max pages, stopping pagination');
+            return;
+        }
+        
+        // Calculate next page number
+        const nextPage = currentPage + 1;
+        
+        // Calculate next result offset
+        const nextOffset = nextPage * resultsPerPage;
+        
+        log.info(`Loading next page: ${nextPage} (offset: ${nextOffset})`);
+        
+        // Track processed pages to avoid loops
+        const processedPages = request.userData.processedPages || [];
+        
+        if (processedPages.includes(nextPage)) {
+            log.info(`Already processed page ${nextPage}, skipping to avoid loop`);
+            return;
+        }
+        
+        processedPages.push(currentPage);
+        
+        // Try to navigate to the next page
+        const nextPageSuccess = await page.evaluate((nextOffset) => {
+            try {
+                // Try the modern Coveo way first
+                if (typeof Coveo !== 'undefined' && Coveo.state) {
+                    Coveo.state(Coveo.$('#search'), { first: nextOffset });
+                    return true;
+                }
+                
+                // Try using location hash
+                const urlObj = new URL(window.location.href);
+                urlObj.hash = urlObj.hash.replace(/first=\d+/, `first=${nextOffset}`);
+                window.location.href = urlObj.toString();
+                return true;
+            } catch (e) {
+                console.error('Error navigating to next page:', e);
+                return false;
+            }
+        }, nextOffset);
+        
+        if (!nextPageSuccess) {
+            log.error('Failed to navigate to next page');
+            return;
+        }
+        
+        // Wait for the page to load
+        await page.waitForFunction(() => {
+            // Check for results or a loading element or error message
+            return document.querySelector('.CoveoResult') !== null || 
+                document.querySelector('.coveo-search-complete') !== null;
+        }, { timeout: 30000 });
+        
+        // Take a screenshot after pagination
+        if (request.userData.debug) {
+            await page.screenshot({ path: `asha-page-${nextPage}.png`, fullPage: true });
+            log.info(`ASHA page ${nextPage} screenshot saved`);
+        }
+        
+        // Add this page to the queue for processing
+        await crawler.addRequests([{
+            url: request.url,
+            userData: {
+                ...request.userData,
+                label: 'api',
+                dataSourceType: 'api',
+                apiType: 'asha',
+                processedPages,
+                pageNumber: nextPage,
+                firstResult: nextOffset
+            }
+        }]);
+        
+    } catch (error) {
+        log.error(`Error handling ASHA pagination: ${error.message}`);
     }
 }
 
