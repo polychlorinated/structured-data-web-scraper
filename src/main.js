@@ -8,90 +8,39 @@ import { router } from './routes.js';
 // Initialize the Actor
 await Actor.init();
 
-// Get input with improved validation
+// Get input or use default URL
 const input = await Actor.getInput();
-
-// Set up default URLs if none provided
 const startUrls = input?.startUrls || [{ 
-    url: 'https://en.wikipedia.org/wiki/List_of_municipalities_in_New_Mexico'
+    url: 'https://en.wikipedia.org/wiki/List_of_municipalities_in_Texas'
 }];
 
 console.log('Starting with URLs:', JSON.stringify(startUrls, null, 2));
 
-// Process each URL and prepare request configurations
-const requests = startUrls.map(startUrl => {
-    // Accept either full object or simple URL string
-    const url = typeof startUrl === 'string' ? startUrl : startUrl.url;
+// Process input options
+const maxConcurrency = input?.maxConcurrency || 1;
+const tableSelector = input?.tableSelector || 'table.wikitable';
+const extractAllColumns = input?.extractAllColumns !== false;
+const debug = input?.debug === true;
+
+console.log(`Configuration: maxConcurrency=${maxConcurrency}, tableSelector="${tableSelector}", extractAllColumns=${extractAllColumns}, debug=${debug}`);
+
+// Ensure userData is attached to requests
+const requests = startUrls.map(url => {
+    // If url is a string, convert to object
+    const requestObject = typeof url === 'string' ? { url } : { ...url };
     
-    // Extract any custom options
-    const userData = {
-        label: startUrl.label || null, // Will default to 'default' handler
-        dataSourceType: startUrl.dataSourceType || input?.dataSourceType || 'auto', // Will be auto-detected if not specified
-        apiType: startUrl.apiType || input?.apiType || null,
-        
-        // API-specific options
-        apiToken: input?.apiToken || startUrl.apiToken || null,
-        headers: input?.headers || startUrl.headers || {},
-        method: startUrl.method || 'GET',
-        body: startUrl.body || null,
-        
-        // Pagination options
-        paginationType: startUrl.paginationType || null,
-        pageParamName: startUrl.pageParamName || 'page',
-        maxPages: input?.maxPages || startUrl.maxPages || 0, // 0 means no limit
-        
-        // Table options
-        tableSelector: startUrl.tableSelector || null,
-        extractAllColumns: (startUrl.extractAllColumns !== undefined) 
-            ? startUrl.extractAllColumns 
-            : (input?.extractAllColumns !== undefined ? input.extractAllColumns : true),
-            
-        // Debug options
-        debug: input?.debug || startUrl.debug || false,
+    // Add or merge userData
+    requestObject.userData = {
+        ...requestObject.userData,
+        // Set default label to 'wikitable' if not already set
+        label: requestObject.userData?.label || 'wikitable',
+        // Add additional configuration
+        tableSelector,
+        extractAllColumns,
+        debug
     };
     
-    // For ASHA API specifically, configure the request properly
-    if (userData.apiType === 'asha') {
-        console.log('Configuring for ASHA API extraction');
-        
-        // ASHA requires browser-based navigation - use their main page
-        if (!url.includes('find.asha.org')) {
-            const originalUrl = url;
-            url = 'https://find.asha.org/pro/';
-            console.log(`Redirecting ASHA URL from ${originalUrl} to ${url}`);
-        }
-        
-        // ASHA now uses a browser-based approach, so we only
-        // need minimal headers if custom headers aren't provided
-        if (!startUrl.headers) {
-            userData.headers = {
-                'accept': '*/*',
-                'accept-language': 'en-US,en;q=0.9',
-                'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36'
-            };
-        }
-    }
-    
-    // For other APIs, ensure proper configuration
-    if (userData.dataSourceType === 'api' && userData.apiType !== 'asha') {
-        // Add basic JSON API headers if not set
-        if (Object.keys(userData.headers).length === 0) {
-            userData.headers = {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            };
-        }
-        
-        // Add authorization if token provided
-        if (userData.apiToken && !userData.headers['Authorization'] && !userData.headers['authorization']) {
-            userData.headers['Authorization'] = `Bearer ${userData.apiToken}`;
-        }
-    }
-    
-    return {
-        url,
-        userData
-    };
+    return requestObject;
 });
 
 // Configure proxy rotation
@@ -114,51 +63,36 @@ const crawler = new PuppeteerCrawler({
         }
     },
     // Additional settings
-    maxRequestRetries: 3,
+    maxRequestRetries: 2,
     requestHandlerTimeoutSecs: 300,
     navigationTimeoutSecs: 180,
-    maxConcurrency: input?.maxConcurrency || 1,
+    maxConcurrency,
     // Log page console messages
     preNavigationHooks: [
         async ({ page, request }) => {
+            // Log page console messages for debugging
             page.on('console', (msg) => console.log(`PAGE LOG [${request.loadedUrl}]:`, msg.text()));
-            await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36');
             
-            // Enable debug features if requested
-            if (request.userData.debug) {
-                page.on('response', async (response) => {
-                    const url = response.url();
-                    const status = response.status();
-                    if (status >= 400) {
-                        console.log(`⚠️ Error ${status} for ${url}`);
-                    } else if (url.includes('api') || url.includes('rest') || url.includes('.json')) {
-                        console.log(`📡 API Response: ${status} ${url}`);
-                        try {
-                            const contentType = response.headers()['content-type'] || '';
-                            if (contentType.includes('application/json')) {
-                                const text = await response.text();
-                                console.log(`Response preview: ${text.substring(0, 150)}...`);
-                            }
-                        } catch (e) {
-                            console.log(`Could not preview response: ${e.message}`);
-                        }
+            // Set a user agent to avoid being blocked
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+            
+            // Set viewport size
+            await page.setViewport({ width: 1920, height: 1080 });
+            
+            // Optional: Disable images and CSS for faster loading
+            if (!debug) {
+                await page.setRequestInterception(true);
+                page.on('request', (req) => {
+                    const resourceType = req.resourceType();
+                    if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+                        req.abort();
+                    } else {
+                        req.continue();
                     }
                 });
             }
         },
     ],
-    // Set up failedRequestHandler to log errors more explicitly
-    failedRequestHandler: async ({ request, error }) => {
-        console.error(`Request ${request.url} failed:`, error);
-        
-        // If the request was an API call, log additional details
-        if (request.userData.dataSourceType === 'api') {
-            console.error(`API call failed with method: ${request.userData.method}, headers:`, request.userData.headers);
-            if (request.userData.body) {
-                console.error('Request body:', request.userData.body);
-            }
-        }
-    },
 });
 
 // Run the crawler
